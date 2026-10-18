@@ -154,5 +154,40 @@ describe('AST Traverser — Parent Scope Extraction', () => {
     expect(names).toContain('multiply');
     expect(names).toContain('divide');
   });
-});
 
+  test('does not drop functions containing syntax errors', () => {
+    const code = `
+      function brokenSyntax(x) {
+        const a = ;
+        return x + 1;
+      }
+    `;
+    const tree = parser.parse(code);
+    const functions = extractFunctions(tree.rootNode, []);
+
+    expect(functions.length).toBe(1);
+    expect(functions[0].name).toBe('brokenSyntax');
+  });
+
+  test('extracts TypeScript functions with type annotations using TypeScript grammar', async () => {
+    const tsParser = new Parser();
+    const tsWasm = path.join(__dirname, '..', 'wasm', 'tree-sitter-typescript.wasm');
+    const TypeScript = await Parser.Language.load(tsWasm);
+    tsParser.setLanguage(TypeScript);
+
+    const tsCode = `
+      interface User { id: string; name: string; }
+      function processUser(user: User): boolean {
+        return user.id.length > 0;
+      }
+      export const getUserName = <T extends User>(u: T): string => u.name;
+    `;
+    const tree = tsParser.parse(tsCode);
+    const functions = extractFunctions(tree.rootNode, []);
+
+    expect(functions.length).toBe(2);
+    const names = functions.map((f) => f.name);
+    expect(names).toContain('processUser');
+    expect(names).toContain('getUserName');
+  });
+});

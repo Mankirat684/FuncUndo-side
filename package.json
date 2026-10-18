@@ -147,6 +147,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src ",
     "test": "node ./out/test/runTest.js",
+    "test:unit": "jest",
     "prepare": "husky"
   },
   "devDependencies": {

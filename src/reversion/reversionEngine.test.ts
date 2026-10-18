@@ -1,4 +1,4 @@
-import { findFunctionAtCursor } from './cursorFinder';
+import { findFunctionAtCursor, findFunctionByIdentity } from './cursorFinder';
 import { ParsedFunction } from '../lib/types';
 
 function createMockFunc(
@@ -83,5 +83,63 @@ describe('Reversion Engine — Cursor & Scope Resolution', () => {
 
     expect(match).not.toBeNull();
     expect(match!.name).toBe('processPayment');
+  });
+});
+
+describe('Reversion Engine — Snapshot Identity Resolution', () => {
+  test('locates function strictly by identity matching name and parentId', () => {
+    const fn1 = createMockFunc('calculateTotal', 10, 20);
+    const fn2 = createMockFunc('validateOrder', 30, 45);
+
+    const match = findFunctionByIdentity([fn1, fn2], {
+      functionName: 'calculateTotal',
+      parentId: 'GLOBAL',
+      parentName: 'GLOBAL',
+    });
+
+    expect(match).not.toBeNull();
+    expect(match!.name).toBe('calculateTotal');
+  });
+
+  test('locates method inside class by parentId', () => {
+    const topFn = createMockFunc('save', 10, 20, 'GLOBAL', 'GLOBAL');
+    const method = createMockFunc('save', 30, 40, 'UserService', 'UserService');
+
+    const match = findFunctionByIdentity([topFn, method], {
+      functionName: 'save',
+      parentId: 'UserService',
+      parentName: 'UserService',
+    });
+
+    expect(match).not.toBeNull();
+    expect(match!.name).toBe('save');
+    expect(match!.parentId).toBe('UserService');
+  });
+
+  test('does not select a different function when target function is absent', () => {
+    const fn1 = createMockFunc('calculateTotal', 10, 20);
+    const fn2 = createMockFunc('validateOrder', 30, 45);
+
+    // Target function computeTax is not present
+    const match = findFunctionByIdentity([fn1, fn2], {
+      functionName: 'computeTax',
+      parentId: 'GLOBAL',
+      parentName: 'GLOBAL',
+    });
+
+    expect(match).toBeNull();
+  });
+
+  test('falls back gracefully to parentName when parentId does not match directly', () => {
+    const method = createMockFunc('process', 10, 20, 'PaymentProcessor', 'PaymentProcessor::v1');
+
+    const match = findFunctionByIdentity([method], {
+      functionName: 'process',
+      parentName: 'PaymentProcessor',
+      parentId: 'PaymentProcessor::v2', // different internal id version
+    });
+
+    expect(match).not.toBeNull();
+    expect(match!.name).toBe('process');
   });
 });
