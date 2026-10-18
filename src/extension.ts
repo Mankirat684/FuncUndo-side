@@ -14,6 +14,7 @@ import {
   generateFunctionId,
   getFunctionTimeline,
   FunctionRecord,
+  runVacuum,
 } from './storage/main';
 import { generateFileHash } from './worker/semanticHasher';
 import { GraphMasterManager } from './worker/graphMasterManager';
@@ -657,6 +658,16 @@ export async function activate(context: vscode.ExtensionContext) {
       console.log('[Chronos] DB init complete');
       treeProvider?.refresh();
       statusBarController?.updateContext();
+
+      // Background vacuum based on configuration
+      try {
+        const config = vscode.workspace.getConfiguration('funcundo');
+        const retentionDays = config.get<number>('retentionDays', 30);
+        const minSnapshots = config.get<number>('minSnapshotsToKeep', 20);
+        runVacuum(retentionDays, minSnapshots);
+      } catch (vacuumErr) {
+        console.warn('[Chronos] Background vacuum failed:', vacuumErr);
+      }
     } catch (err) {
       console.error('[Chronos] DB init failed:', err);
       vscode.window.showErrorMessage(`FuncUndo: Database initialization failed: ${err}`);

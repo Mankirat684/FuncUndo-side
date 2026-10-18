@@ -2,40 +2,38 @@ import { eq, asc, inArray } from 'drizzle-orm';
 import { getDrizzleDB, getDB,persistDB } from './db';
 import { functionHistory, snapshots, dependencies, pointers } from './schema';
 
-export function runVacuum(): void {
-    const sqlJsDb = getDB();
-    const db = getDrizzleDB();
+export function runVacuum(retentionDays: number = 30, minSnapshotsToKeep: number = 20): void {
+  const sqlJsDb = getDB();
+  const db = getDrizzleDB();
   if (!sqlJsDb) {
     console.error('Database not initialized');
     return;
   }
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
-  
   // Get all tracked functions
   const allFunctions = db.select().from(functionHistory).all();
-  
+
   sqlJsDb.run('BEGIN TRANSACTION;');
   try {
+    for (const fn of allFunctions) {
+      // Get all snapshots oldest → newest
+      const allSnapshots = db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.functionHistoryId, fn.id))
+        .orderBy(asc(snapshots.createdAt))
+        .all();
 
-  for (const fn of allFunctions) {
-    // Get all snapshots oldest → newest
-    const allSnapshots = db
-      .select()
-      .from(snapshots)
-      .where(eq(snapshots.functionHistoryId, fn.id))
-      .orderBy(asc(snapshots.createdAt))
-      .all();
-
-    if (allSnapshots.length <= 10) continue; // nothing to vacuum
-    // Always keep last 10
-    const keepIds = allSnapshots.slice(-10).map((s) => s.id);
-    // Delete candidates — outside last 10 AND older than 30 days
-    const deleteCandidates = allSnapshots
-      .slice(0, -10)
-      .filter((s) => s.createdAt < thirtyDaysAgo)
-      .map((s) => s.id);
-    if (deleteCandidates.length === 0) continue;
+      if (allSnapshots.length <= minSnapshotsToKeep) continue; // nothing to vacuum
+      // Always keep at least minSnapshotsToKeep
+      const keepIds = allSnapshots.slice(-minSnapshotsToKeep).map((s) => s.id);
+      // Delete candidates — outside minSnapshotsToKeep AND older than cutoffTime
+      const deleteCandidates = allSnapshots
+        .slice(0, -minSnapshotsToKeep)
+        .filter((s) => s.createdAt < cutoffTime)
+        .map((s) => s.id);
+      if (deleteCandidates.length === 0) continue;
 
     // Delete dependencies first — foreign key constraint
       //   db.delete(dependencies)
