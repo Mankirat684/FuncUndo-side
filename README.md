@@ -4,7 +4,7 @@
 ![VS Code API](https://img.shields.io/badge/VS%20Code%20API-0066B8?style=for-the-badge&logo=visualstudiocode&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=for-the-badge&logo=webassembly&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite_WASM-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
-![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Drizzle ORM](https://img.shields.io/badge/Drizzle_ORM-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black)
 ### *Stop undoing files. Start reverting logic.*
 
 **FuncUndo** (internally *Chronos*) is a function-level version control system for VS Code. While Git tracks raw text lines, FuncUndo understands **Abstract Syntax Trees (AST)**. It tracks changes to your logic blocks silently in the background, allowing you to "time travel" individual functions without affecting the rest of your file.
@@ -19,7 +19,7 @@ Git is a blunt instrument for local, exploratory coding. When you’re deep in a
 | --- | --- | --- |
 | **Granularity** | File or Line-level | **Function & Method-level** |
 | **Context** | Raw text differences | **Semantic logic changes** |
-| **Safety** | Blind reversion | **Dependency risk assessment** |
+| **Safety** | Blind reversion | **Blast radius & caller analysis** |
 | **Noise** | Tracks whitespace/formatting | **Ignores non-logic changes** |
 
 ---
@@ -27,10 +27,10 @@ Git is a blunt instrument for local, exploratory coding. When you’re deep in a
 ## ✨ Key Superpowers
 
 * **🧠 AST-Aware Tracking:** Hashes code based on structural logic. If you only changed a comment or added whitespace, FuncUndo knows the logic is the same and won't clutter your history.
-* **🕸️ The Risk Engine:** Features a real-time Directed Acyclic Graph (DAG) of your call stack. It warns you before a revert if the change will break active dependent functions.
-* **🔒 100% Local & Private:** Your code never leaves your machine. History is stored in a high-performance SQLite WASM binary within your workspace.
-* **⚡ Zero-Lag Architecture:** Heavy lifting is offloaded to Node.js Worker Threads. Your VS Code UI stays at a flawless 60fps while we parse your AST in the background.
-* **🌐 WASM-Powered:** Built on `web-tree-sitter` and `sql.js` for zero native dependencies. It works out-of-the-box on Windows, Mac, Linux, and even VS Code for the Web.
+* **🕸️ Blast Radius & Dependency Graph:** Computes a real-time call graph of your workspace. Whenever you undo, redo, or revert, it delivers a non-intrusive debounced notification (1.5s–2s) showing the risk level and all impacted caller functions, with an interactive visual dependency graph and in-editor hover tooltips.
+* **🔒 100% Local & Private:** Your code never leaves your machine. History is stored in a high-performance SQLite WASM database (`funcundo.sqlite`) within your extension storage.
+* **⚡ Non-Blocking Architecture:** Heavy lifting is offloaded to Node.js Worker Threads (`worker_threads`). Your VS Code UI stays responsive while AST parsing and graph resolution occur in background workers.
+* **🌐 WASM-Powered:** Built on `web-tree-sitter` and `sql.js` for zero native build dependencies. Works out-of-the-box on Windows, Mac, and Linux.
 
 ---
 
@@ -42,53 +42,58 @@ We strictly decouple the **Compiler Track** (Heavy Processing) from the **UI Tra
 graph TD
     subgraph Client["VS Code IDE"]
         Editor["Active Text Editor"]
-        UI["React Webview Sidebar"]
+        TreeView["Function Explorer Sidebar"]
+        GraphWebview["Dependency Graph Webview (HTML5 Canvas)"]
+        Hover["Hover Blast Radius Tooltip"]
     end
 
     subgraph ExtensionHost["Main Node.js Process"]
         EventLoop["Event Orchestrator & Debouncer"]
         WorkspaceEdit["Reversion Engine"]
-        RiskEngine["Risk & Dependency Engine"]
+        Notifier["Debounced Blast Radius Notifier"]
     end
 
-    subgraph Worker["Background Node Worker"]
-        Parser["Tree-sitter WASM Parser"]
-        ASTExtractor["AST Structural Hasher"]
+    subgraph Worker["Background Node Workers"]
+        Parser["Tree-sitter WASM Parser Worker"]
+        GraphMaster["Graph Master Worker (Global Registry)"]
     end
 
-    subgraph Storage["Local File System"]
-        DB[("sql.js WASM Database")]
-        VFile[".vscode/semantic-history.sqlite"]
+    subgraph Storage["Local SQLite Database"]
+        DB[("sql.js WASM + Drizzle ORM")]
+        VFile["funcundo.sqlite (Extension Storage)"]
     end
 
     Editor -- "onDidSave" --> EventLoop
     EventLoop -- "Raw Text (IPC)" --> Parser
-    Parser --> ASTExtractor
-    ASTExtractor -- "ExtractedFunctions[]" --> EventLoop
-    EventLoop -- "Compare Hash & Insert" --> DB
-    UI <--> |RPC| RiskEngine
-    UI -- "Trigger Revert" --> WorkspaceEdit
+    Parser -- "Parsed Functions" --> EventLoop
+    EventLoop -- "Compare Hash & Record Snapshot" --> DB
+    EventLoop -- "Ingest AST Payloads" --> GraphMaster
+    TreeView <--> |Read Timeline| DB
+    GraphWebview <--> |Query Full Graph| GraphMaster
+    Hover <--> |Query Blast Radius| GraphMaster
+    TreeView -- "Trigger Revert" --> WorkspaceEdit
     WorkspaceEdit -- "Surgical AST Diff" --> Editor
-
+    WorkspaceEdit -- "Post-Revert Trigger" --> Notifier
+    Notifier -- "Query Callers & Notify" --> GraphMaster
 ```
 
 ---
 
 ## 🔄 The "Safe Revert" Lifecycle
 
-1. **The Silent Loop:** Every time you save, a background worker parses the file into an AST.
-2. **Logic Fingerprinting:** We generate a unique hash for every function body. If the hash changes, we store a new "version" in SQLite.
-3. **Blast Radius Analysis:** When you click "Revert," the **Risk Engine** queries the DB: *"Who calls this function?"* If dependents exist, we show a DANGER modal.
-4. **Surgical Patching:** Instead of a full file overwrite, we use `vscode.WorkspaceEdit` to replace only the specific character coordinates of the function, followed by a programmatic format to match your style.
+1. **The Silent Loop:** Every time you save (or trigger debounced change detection), a background worker parses the file into an AST.
+2. **Logic Fingerprinting:** We generate a semantic hash for every function body. If the executable logic changes, we record a new snapshot in SQLite with true parent lineage (`parentSnapshotId`).
+3. **Blast Radius Analysis:** When you undo, redo, or revert, FuncUndo debounces (1.5s–2s) and surfaces an informative notification showing the risk level (`SAFE`, `WARNING`, `DANGER`) and all impacted callers, with a 1-click shortcut to inspect the visual Dependency Graph.
+4. **Surgical Patching:** Instead of a full file overwrite, we use `vscode.WorkspaceEdit` to replace only the specific character coordinates of the target function.
 
 ---
 
 ## 🛠 Tech Stack
 
 * **Parser:** `web-tree-sitter` (Compiled to WebAssembly)
-* **Database:** `sql.js` with `Kysely` ORM for type-safe SQL.
-* **Frontend:** React 18 + Zustand for state + VS Code Webview UI Toolkit.
-* **Concurrency:** Node.js `worker_threads` for non-blocking AST parsing.
+* **Database:** `sql.js` (SQLite compiled to WASM) with `Drizzle ORM` for type-safe schema definitions and versioned migrations.
+* **Frontend & Visuals:** Native VS Code TreeView API, in-editor Markdown hover tooltips, and an interactive force-directed HTML5 Canvas dependency graph.
+* **Concurrency:** Node.js `worker_threads` for non-blocking AST parsing and in-memory graph resolution.
 
 ---
 
@@ -103,36 +108,35 @@ graph TD
 
 1. **Clone the repo:**
 ```bash
-git clone https://github.com/SemanticCodeTools/chronos-extension.git
-cd chronos-extension
-
+git clone https://github.com/ChronosTeamx/FuncUndo.git
+cd FuncUndo
 ```
-
 
 2. **Install & Build:**
-
 ```bash
-    npm install
-    npm run compile # Compiles TS and copies WASM binaries
-    ```
-3.  **Launch:**
-    Press `F5` in VS Code to open the **Extension Development Host**.
+npm install
+npm run compile # Compiles TS and copies WASM binaries
 ```
+
+3. **Launch:**
+Press `F5` in VS Code to open the **Extension Development Host**.
+
 ---
 
 ## 📂 Project Structure
 
 ```bash
-chronos-extension/
+chronos/
 ├── src/
-│   ├── engine/       # Track A: The Compiler (WASM Parser & Workers)
-│   ├── storage/      # Track B: The Database (Kysely Schema & SQLite)
-│   ├── webview/      # Track B: The UI (React App & Components)
-│   ├── extension.ts  # The Orchestrator
-│   └── shared/       # Shared Types & Contracts
-├── wasm-binaries/    # Pre-compiled Tree-sitter & SQLite targets
-└── esbuild.js        # Lightning fast build script
-
+│   ├── worker/       # Background Node Workers (Parser & GraphMaster)
+│   ├── graph/        # GlobalSymbolRegistry & Directed Relational Graph
+│   ├── storage/      # Drizzle Schema, Migrations, Snapshots, & Reads
+│   ├── ui/           # TreeView Provider, Dependency Graph Canvas, & Hover Tooltips
+│   ├── reversion/    # Cursor Finder & AST Reversion Engine
+│   ├── commands/     # User-controlled Function Merge Commands
+│   └── extension.ts  # Extension Entrypoint & Orchestrator
+├── media/            # Icons and styling assets
+└── esbuild.js        # Production bundler script
 ```
 
 ---

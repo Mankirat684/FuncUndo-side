@@ -11,7 +11,7 @@ import {
 } from './schema';
 import { upsertFunction } from './functions';
 import { functionIdentity } from './functions';
-import { setPointer } from './pointer';
+import { setPointer, getPointer } from './pointer';
 
 export interface parsedFunction {
   filePath: string;
@@ -25,7 +25,7 @@ export interface parsedFunction {
   endLine: number;
 }
 
-export function saveSnapshot(fn: parsedFunction): string {
+export function saveSnapshot(fn: parsedFunction, parentSnapshotId?: string): string {
   const identity: functionIdentity = {
     filePath: fn.filePath,
     functionName: fn.functionName,
@@ -34,12 +34,17 @@ export function saveSnapshot(fn: parsedFunction): string {
   };
   const functionHistoryId = upsertFunction(identity);
 
+  // If explicit parentSnapshotId is not provided, inherit from current active pointer
+  const resolvedParentId =
+    parentSnapshotId !== undefined ? parentSnapshotId : getPointer(functionHistoryId);
+
   const snapshotId = crypto.randomUUID();
 
   // Insert snapshot record
   const newSnapshot: NewSnapshot = {
     id: snapshotId,
     functionHistoryId: functionHistoryId,
+    parentSnapshotId: resolvedParentId,
     content: fn.content,
     hash: fn.hash,
     startLine: fn.startLine,

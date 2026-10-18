@@ -12,6 +12,7 @@ import {
   setPointer,
   getPreviousSnapshot,
   getNextSnapshot,
+  getNextSnapshots,
   mergeFunctionHistories,
   runVacuum,
   parsedFunction,
@@ -186,6 +187,72 @@ describe('Storage Layer & DB Helper Functions', () => {
     // Redo from v2 -> should give v3
     const nextFromV2 = getNextSnapshot(fnId);
     expect(nextFromV2!.id).toBe(v3Id);
+  });
+
+  test('branching history: editing after undo navigates ancestry without jumping to abandoned branch', async () => {
+    const baseFn = {
+      filePath: 'src/branching.ts',
+      functionName: 'computeScore',
+      parentName: 'GLOBAL',
+      parentId: 'GLOBAL',
+      dependencies: [],
+      startLine: 1,
+      endLine: 5,
+    };
+
+    // 1. Save v1 (Original)
+    const v1Id = saveSnapshot({
+      ...baseFn,
+      content: 'return baseScore;',
+      hash: 'h_v1',
+    });
+    const fnId = upsertFunction(baseFn);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 2. Save v2 (First edit)
+    const v2Id = saveSnapshot({
+      ...baseFn,
+      content: 'return baseScore + bonus;',
+      hash: 'h_v2',
+    });
+
+    expect(getPointer(fnId)).toBe(v2Id);
+
+    // 3. User undos from v2 back to v1
+    const undoToV1 = getPreviousSnapshot(fnId);
+    expect(undoToV1).not.toBeNull();
+    expect(undoToV1!.id).toBe(v1Id);
+    setPointer(fnId, v1Id);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 4. User edits v1 into v3 (forks a new branch from v1)
+    const v3Id = saveSnapshot({
+      ...baseFn,
+      content: 'return baseScore * multiplier;',
+      hash: 'h_v3',
+    });
+
+    expect(getPointer(fnId)).toBe(v3Id);
+
+    // 5. User undos from v3: MUST return v1 (the true parent), NOT v2 (chronologically adjacent)
+    const undoFromV3 = getPreviousSnapshot(fnId);
+    expect(undoFromV3).not.toBeNull();
+    expect(undoFromV3!.id).toBe(v1Id);
+    expect(undoFromV3!.id).not.toBe(v2Id);
+
+    // 6. User sets pointer to v1: getNextSnapshots should return all child branches ([v3, v2])
+    setPointer(fnId, v1Id);
+    const branchesFromV1 = getNextSnapshots(fnId);
+    expect(branchesFromV1).toHaveLength(2);
+    expect(branchesFromV1[0].id).toBe(v3Id); // newest branch first
+    expect(branchesFromV1[1].id).toBe(v2Id); // earlier branch
+
+    // getNextSnapshot returns newest branch by default
+    const redoFromV1 = getNextSnapshot(fnId);
+    expect(redoFromV1).not.toBeNull();
+    expect(redoFromV1!.id).toBe(v3Id);
   });
 
   test('mergeFunctionHistories unifies two functions after rename', async () => {

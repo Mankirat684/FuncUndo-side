@@ -86,6 +86,7 @@ function runMigrations(): void {
     sqlJsDb.run('BEGIN TRANSACTION');
 
     if (currentVersion < 1) migrateV1();
+    if (currentVersion < 2) migrateV2();
 
     sqlJsDb.run('COMMIT');
   } catch (err) {
@@ -140,6 +141,26 @@ function migrateV1(): void {
 
   sqlJsDb.run('PRAGMA user_version = 1');
   console.log('[FuncUndo] Migration to v1 completed');
+}
+
+function migrateV2(): void {
+  if (!sqlJsDb) return;
+
+  // Defensive check: only add column if it doesn't already exist
+  const tableInfo = sqlJsDb.exec('PRAGMA table_info(snapshots)');
+  const columns = tableInfo[0]?.values.map((col: any[]) => col[1]) ?? [];
+
+  if (!columns.includes('parentSnapshotId')) {
+    sqlJsDb.run('ALTER TABLE snapshots ADD COLUMN parentSnapshotId TEXT;');
+  }
+
+  sqlJsDb.run(`
+    CREATE INDEX IF NOT EXISTS idx_snapshots_parent
+      ON snapshots(parentSnapshotId);
+    PRAGMA user_version = 2;
+  `);
+
+  console.log('[FuncUndo] Migration to v2 completed');
 }
 
 export function getDB(): Database {

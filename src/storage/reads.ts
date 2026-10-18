@@ -1,4 +1,4 @@
-import { eq, desc, inArray } from 'drizzle-orm';
+import { eq, desc, asc, inArray, and, lt, gt } from 'drizzle-orm';
 import { getDrizzleDB } from './db';
 import { snapshots, dependencies, functionHistory, pointers } from './schema';
 import type { SnapshotRecord, DependencyRecord, FunctionRecord } from './schema';
@@ -111,6 +111,7 @@ export function getFunctionById(functionHistoryId: string): FunctionRecord | nul
 
 /**
  * Returns the snapshot immediately preceding the currently pointed snapshot (for Undo).
+ * Uses true parentSnapshotId ancestry first, falling back to timestamp ordering for legacy records.
  * Returns null if already at the oldest state or if no history exists.
  */
 export function getPreviousSnapshot(functionHistoryId: string): SnapshotRecord | null {
@@ -121,30 +122,66 @@ export function getPreviousSnapshot(functionHistoryId: string): SnapshotRecord |
     .where(eq(pointers.functionHistoryId, functionHistoryId))
     .get();
 
-  const allSnapshots = db
-    .select()
-    .from(snapshots)
-    .where(eq(snapshots.functionHistoryId, functionHistoryId))
-    .orderBy(desc(snapshots.createdAt))
-    .all();
-
-  if (allSnapshots.length <= 1) return null;
-
-  const currentSnapshotId = pointerRow?.currentSnapshotId || allSnapshots[0].id;
-  const currentIndex = allSnapshots.findIndex((s) => s.id === currentSnapshotId);
-
-  if (currentIndex === -1 || currentIndex >= allSnapshots.length - 1) {
-    return null; // already at oldest
+  const currentSnapshotId = pointerRow?.currentSnapshotId;
+  if (!currentSnapshotId) {
+    const newest = db
+      .select()
+      .from(snapshots)
+      .where(eq(snapshots.functionHistoryId, functionHistoryId))
+      .orderBy(desc(snapshots.createdAt))
+      .limit(1)
+      .get();
+    if (!newest || !newest.parentSnapshotId) return null;
+    return (
+      db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.id, newest.parentSnapshotId))
+        .get() ?? null
+    );
   }
 
-  return allSnapshots[currentIndex + 1];
+  const currentSnapshot = db
+    .select()
+    .from(snapshots)
+    .where(eq(snapshots.id, currentSnapshotId))
+    .get();
+
+  if (!currentSnapshot) return null;
+
+  // 1. Ancestry lookup: if parentSnapshotId exists, return that parent directly
+  if (currentSnapshot.parentSnapshotId) {
+    const parent = db
+      .select()
+      .from(snapshots)
+      .where(eq(snapshots.id, currentSnapshot.parentSnapshotId))
+      .get();
+    if (parent) return parent;
+  }
+
+  // 2. Fallback for legacy snapshots created before parentSnapshotId was introduced:
+  const olderSnapshot = db
+    .select()
+    .from(snapshots)
+    .where(
+      and(
+        eq(snapshots.functionHistoryId, functionHistoryId),
+        lt(snapshots.createdAt, currentSnapshot.createdAt),
+      ),
+    )
+    .orderBy(desc(snapshots.createdAt))
+    .limit(1)
+    .get();
+
+  return olderSnapshot ?? null;
 }
 
 /**
- * Returns the snapshot immediately following the currently pointed snapshot (for Redo).
- * Returns null if already at the newest state or if no history exists.
+ * Returns all child snapshots following the currently pointed snapshot (for Redo / Branch Selection).
+ * Uses child branch ancestry (parentSnapshotId) first, falling back to timestamp ordering for legacy records.
+ * Returns child branches ordered newest-first (descending createdAt).
  */
-export function getNextSnapshot(functionHistoryId: string): SnapshotRecord | null {
+export function getNextSnapshots(functionHistoryId: string): SnapshotRecord[] {
   const db = getDrizzleDB();
   const pointerRow = db
     .select()
@@ -152,20 +189,49 @@ export function getNextSnapshot(functionHistoryId: string): SnapshotRecord | nul
     .where(eq(pointers.functionHistoryId, functionHistoryId))
     .get();
 
-  if (!pointerRow) return null;
+  if (!pointerRow) return [];
 
-  const allSnapshots = db
+  const currentSnapshot = db
     .select()
     .from(snapshots)
-    .where(eq(snapshots.functionHistoryId, functionHistoryId))
+    .where(eq(snapshots.id, pointerRow.currentSnapshotId))
+    .get();
+
+  if (!currentSnapshot) return [];
+
+  // 1. Ancestry lookup: find all child snapshots created from this snapshot (latest branch first)
+  const childSnapshots = db
+    .select()
+    .from(snapshots)
+    .where(eq(snapshots.parentSnapshotId, currentSnapshot.id))
     .orderBy(desc(snapshots.createdAt))
     .all();
 
-  const currentIndex = allSnapshots.findIndex((s) => s.id === pointerRow.currentSnapshotId);
+  if (childSnapshots.length > 0) return childSnapshots;
 
-  if (currentIndex <= 0) {
-    return null; // already at newest
-  }
+  // 2. Fallback for legacy snapshots without parentSnapshotId:
+  const newerSnapshot = db
+    .select()
+    .from(snapshots)
+    .where(
+      and(
+        eq(snapshots.functionHistoryId, functionHistoryId),
+        gt(snapshots.createdAt, currentSnapshot.createdAt),
+      ),
+    )
+    .orderBy(asc(snapshots.createdAt))
+    .limit(1)
+    .get();
 
-  return allSnapshots[currentIndex - 1];
+  return newerSnapshot ? [newerSnapshot] : [];
+}
+
+/**
+ * Returns the latest child snapshot immediately following the currently pointed snapshot (default Redo).
+ * Uses child branch ancestry (parentSnapshotId) first, falling back to timestamp ordering for legacy records.
+ * Returns null if already at the newest state or if no history exists.
+ */
+export function getNextSnapshot(functionHistoryId: string): SnapshotRecord | null {
+  const nextSnapshots = getNextSnapshots(functionHistoryId);
+  return nextSnapshots.length > 0 ? nextSnapshots[0] : null;
 }

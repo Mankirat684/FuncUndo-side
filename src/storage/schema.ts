@@ -23,6 +23,7 @@ export const snapshots = sqliteTable('snapshots', {
   functionHistoryId: text('functionHistoryId')
     .notNull()
     .references(() => functionHistory.id),
+  parentSnapshotId: text('parentSnapshotId'),
   content: text('content').notNull(),
   hash: text('hash').notNull(),
   startLine: integer('startLine').notNull(),

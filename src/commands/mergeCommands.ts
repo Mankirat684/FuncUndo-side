@@ -28,13 +28,13 @@ export function registerMergeCommands(
           return;
         }
 
-        let sourceFunc: FunctionRecord;
+        let funcA: FunctionRecord;
 
-        // Step 1: Determine source function (either clicked item or picked from list)
+        // Step 1: Determine first function
         if (sourceItem?.func) {
-          sourceFunc = sourceItem.func;
+          funcA = sourceItem.func;
         } else {
-          const sourcePickItems: FunctionQuickPickItem[] = allFunctions.map((fn) => {
+          const pickItemsA: FunctionQuickPickItem[] = allFunctions.map((fn) => {
             const timeline = getFunctionTimeline(fn.id);
             const fileName = path.basename(fn.filePath);
             const scope = fn.parentName && fn.parentName !== 'GLOBAL' ? ` (${fn.parentName})` : '';
@@ -45,18 +45,18 @@ export function registerMergeCommands(
             };
           });
 
-          const selectedSource = await vscode.window.showQuickPick(sourcePickItems, {
-            placeHolder: 'Select the OLD / source function you renamed',
-            title: 'FuncUndo: Merge Step 1 of 2 (Source Function)',
+          const selectedA = await vscode.window.showQuickPick(pickItemsA, {
+            placeHolder: 'Select the first function to merge',
+            title: 'FuncUndo: Merge Step 1 of 3 (Select First Function)',
           });
 
-          if (!selectedSource) return;
-          sourceFunc = selectedSource.func;
+          if (!selectedA) return;
+          funcA = selectedA.func;
         }
 
-        // Step 2: Pick target function to merge into
-        const targetCandidates = allFunctions.filter((fn) => fn.id !== sourceFunc.id);
-        const targetPickItems: FunctionQuickPickItem[] = targetCandidates.map((fn) => {
+        // Step 2: Pick second function
+        const candidatesB = allFunctions.filter((fn) => fn.id !== funcA.id);
+        const pickItemsB: FunctionQuickPickItem[] = candidatesB.map((fn) => {
           const timeline = getFunctionTimeline(fn.id);
           const fileName = path.basename(fn.filePath);
           const scope = fn.parentName && fn.parentName !== 'GLOBAL' ? ` (${fn.parentName})` : '';
@@ -67,18 +67,51 @@ export function registerMergeCommands(
           };
         });
 
-        const selectedTarget = await vscode.window.showQuickPick(targetPickItems, {
-          placeHolder: `Select the NEW target function to merge '${sourceFunc.functionName}' into`,
-          title: `FuncUndo: Merge Step 2 of 2 (Target for '${sourceFunc.functionName}')`,
+        const selectedB = await vscode.window.showQuickPick(pickItemsB, {
+          placeHolder: `Select the second function to merge with '${funcA.functionName}'`,
+          title: `FuncUndo: Merge Step 2 of 3 (Select Second Function)`,
         });
 
-        if (!selectedTarget) return;
-        const targetFunc = selectedTarget.func;
+        if (!selectedB) return;
+        const funcB = selectedB.func;
 
-        // Step 3: Confirmation
+        // Step 3: Choose which function to keep (the destination)
+        interface MergeDirectionItem extends vscode.QuickPickItem {
+          target: FunctionRecord;
+          source: FunctionRecord;
+        }
+
+        const directionItems: MergeDirectionItem[] = [
+          {
+            label: `$(arrow-right) Keep '${funcB.functionName}' as final function`,
+            description: `Merge '${funcA.functionName}' into '${funcB.functionName}'`,
+            detail: `All history from '${funcA.functionName}' will be transferred into '${funcB.functionName}'.`,
+            target: funcB,
+            source: funcA,
+          },
+          {
+            label: `$(arrow-left) Keep '${funcA.functionName}' as final function`,
+            description: `Merge '${funcB.functionName}' into '${funcA.functionName}'`,
+            detail: `All history from '${funcB.functionName}' will be transferred into '${funcA.functionName}'.`,
+            target: funcA,
+            source: funcB,
+          },
+        ];
+
+        const selectedDirection = await vscode.window.showQuickPick(directionItems, {
+          placeHolder: 'Which function identity do you want to keep?',
+          title: 'FuncUndo: Merge Step 3 of 3 (Choose Destination)',
+        });
+
+        if (!selectedDirection) return;
+
+        const targetFunc = selectedDirection.target;
+        const sourceFunc = selectedDirection.source;
+
+        // Step 4: Confirmation
         const sourceTimeline = getFunctionTimeline(sourceFunc.id);
         const confirm = await vscode.window.showWarningMessage(
-          `Merge ${sourceTimeline.length} version(s) of '${sourceFunc.functionName}' into '${targetFunc.functionName}'? This will unify their history into a single function.`,
+          `Merge ${sourceTimeline.length} version(s) of '${sourceFunc.functionName}' into '${targetFunc.functionName}'? The unified history will live under '${targetFunc.functionName}'.`,
           { modal: true },
           'Merge Histories',
         );

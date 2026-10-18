@@ -23,6 +23,7 @@ export {
   getFunctionById,
   getPreviousSnapshot,
   getNextSnapshot,
+  getNextSnapshots,
 } from './reads';
 
 // Pointer management

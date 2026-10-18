@@ -12,6 +12,8 @@ import {
   getSnapshotById,
   getFunctionById,
   generateFunctionId,
+  getFunctionTimeline,
+  FunctionRecord,
 } from './storage/main';
 import { generateFileHash } from './worker/semanticHasher';
 import { GraphMasterManager } from './worker/graphMasterManager';
@@ -227,26 +229,36 @@ async function orchestrate(filePath: string, fileText: string): Promise<void> {
       return;
     }
 
-    // File-level early exit — skip if nothing changed
-    const currentFileHash = generateFileHash(parsedFunctions.map((fn) => fn.hash));
+    // File-level early exit — include identity (name + parentId + hash) to track renames
+    const currentSignatures = parsedFunctions.map(
+      (fn) => `${fn.name}::${fn.parentId || 'GLOBAL'}::${fn.hash}`,
+    );
     const knownFunctions = getAllFunctionsInFile(filePath);
     const timelineMap = getTimelineForFile(filePath);
 
     if (knownFunctions.length > 0) {
-      const lastHashes = knownFunctions
+      const lastSignatures = knownFunctions
         .map((fn) => {
+          let hash: string | undefined;
           const activePointer = getPointer(fn.id);
           if (activePointer) {
             const snap = getSnapshotById(activePointer);
-            if (snap) return snap.snapshot.hash;
+            if (snap) hash = snap.snapshot.hash;
           }
-          return timelineMap.get(fn.id)?.[0]?.snapshot.hash;
+          if (!hash) {
+            hash = timelineMap.get(fn.id)?.[0]?.snapshot.hash;
+          }
+          return hash ? `${fn.functionName}::${fn.parentId || 'GLOBAL'}::${hash}` : null;
         })
-        .filter((h): h is string => !!h);
+        .filter((s): s is string => !!s);
 
-      const lastFileHash = generateFileHash(lastHashes);
+      const currentFileHash = generateFileHash(currentSignatures);
+      const lastFileHash = generateFileHash(lastSignatures);
 
-      if (currentFileHash === lastFileHash) {
+      if (
+        currentFileHash === lastFileHash &&
+        parsedFunctions.length === knownFunctions.length
+      ) {
         console.log('[Orchestrator] File unchanged, skipping');
         return;
       }
@@ -286,24 +298,6 @@ async function orchestrate(filePath: string, fileText: string): Promise<void> {
         continue;
       }
 
-      // Rename detection — same hash, same row, different name
-      let renamedFrom: string | undefined;
-      for (const known of knownFunctions) {
-        const timeline = timelineMap.get(known.id);
-        if (!timeline || timeline.length === 0) continue;
-
-        const latest = timeline[0].snapshot;
-        if (
-          latest.hash === fn.hash &&
-          known.functionName !== fn.name &&
-          latest.startLine === fn.range.start.row
-        ) {
-          renamedFrom = known.functionName;
-          console.log(`[RenameHeuristic] ${renamedFrom} → ${fn.name}`);
-          break;
-        }
-      }
-
       functionsToSave.push({
         filePath,
         functionName: fn.name,
@@ -316,11 +310,7 @@ async function orchestrate(filePath: string, fileText: string): Promise<void> {
         endLine: fn.range.end.row,
       });
 
-      console.log(
-        renamedFrom
-          ? `[Orchestrator] Queued rename: ${renamedFrom} → ${fn.name}`
-          : `[Orchestrator] Queued: ${fn.name} (${lastHash ? 'changed' : 'new'})`,
-      );
+      console.log(`[Orchestrator] Queued: ${fn.name} (${lastHash ? 'changed' : 'new'})`);
     }
 
     if (functionsToSave.length > 0) {
@@ -386,6 +376,97 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
   );
 
+  let blastRadiusNotifyTimer: NodeJS.Timeout | null = null;
+
+  const scheduleBlastRadiusNotification = (
+    filePath: string,
+    functionName: string,
+    parentId?: string,
+  ) => {
+    if (blastRadiusNotifyTimer) {
+      clearTimeout(blastRadiusNotifyTimer);
+    }
+
+    blastRadiusNotifyTimer = setTimeout(async () => {
+      if (!graphMasterManager) return;
+      try {
+        const risk = await graphMasterManager.queryBlastRadius(filePath, functionName, parentId);
+        const count = risk.blastRadiusCount;
+        const level = risk.level ?? (count === 0 ? 'SAFE' : count <= 3 ? 'WARNING' : 'DANGER');
+
+        let message: string;
+        if (count === 0) {
+          message = `FuncUndo: '${functionName}' has a blast radius of 0 (no impacted callers).`;
+        } else {
+          const list = risk.impactedFunctions?.slice(0, 4).join(', ') ?? '';
+          const extra =
+            (risk.impactedFunctions?.length ?? 0) > 4
+              ? ` (+${(risk.impactedFunctions?.length ?? 0) - 4} more)`
+              : '';
+          message = `FuncUndo: '${functionName}' (${level} risk) has ${count} impacted caller(s): ${list}${extra}.`;
+        }
+
+        const action = await vscode.window.showInformationMessage(
+          message,
+          'View Dependency Graph',
+        );
+        if (action === 'View Dependency Graph') {
+          vscode.commands.executeCommand('chronos.showDependencyGraph');
+        }
+      } catch (err) {
+        console.warn('[BlastRadiusNotifier] Failed to query blast radius:', err);
+      }
+    }, 1750);
+  };
+
+  let missingDepsNotifyTimer: NodeJS.Timeout | null = null;
+
+  const scheduleMissingDepsNotification = (
+    filePath: string,
+    functionName: string,
+    editor: vscode.TextEditor,
+  ) => {
+    if (missingDepsNotifyTimer) {
+      clearTimeout(missingDepsNotifyTimer);
+    }
+
+    missingDepsNotifyTimer = setTimeout(async () => {
+      if (!workerManager) return;
+      try {
+        const fileText = editor.document.getText();
+        const parseResult = await workerManager.parseDocument(filePath, fileText);
+        const liveFunc = parseResult.functions.find((f) => f.name === functionName);
+        const callsToCheck = liveFunc?.rawCalls || liveFunc?.calls || [];
+        if (callsToCheck.length === 0) return;
+
+        const activeFunctionNames = new Set(parseResult.functions.map((f) => f.name));
+        const knownInFile = getAllFunctionsInFile(filePath);
+
+        const missingFunctions: FunctionRecord[] = [];
+        for (const callName of callsToCheck) {
+          if (!activeFunctionNames.has(callName)) {
+            const match = knownInFile.find((kf) => kf.functionName === callName);
+            if (match) {
+              const timeline = getFunctionTimeline(match.id);
+              if (timeline.length > 0 && !missingFunctions.some((mf) => mf.id === match.id)) {
+                missingFunctions.push(match);
+              }
+            }
+          }
+        }
+
+        if (missingFunctions.length === 0) return;
+
+        const names = missingFunctions.map((m) => `'${m.functionName}'`).join(', ');
+        const message = `FuncUndo: '${functionName}' calls deleted function(s): ${names}. These exist in your history.`;
+
+        vscode.window.showInformationMessage(message);
+      } catch (err) {
+        console.warn('[MissingDepsNotifier] Error checking missing dependencies:', err);
+      }
+    }, 1800);
+  };
+
   // 4. Register commands immediately (so commands like chronos.refreshExplorer are never 'not found')
   context.subscriptions.push(
     vscode.commands.registerCommand('chronos.undoFunction', async () => {
@@ -397,10 +478,14 @@ export async function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      const success = await undoFunctionAtCursor(editor, workerManager);
-      if (success) {
+      const result = await undoFunctionAtCursor(editor, workerManager);
+      if (result.success) {
         treeProvider?.refresh();
         statusBarController?.updateContext(editor);
+        if (result.filePath && result.functionName) {
+          scheduleBlastRadiusNotification(result.filePath, result.functionName, result.parentId);
+          scheduleMissingDepsNotification(result.filePath, result.functionName, editor);
+        }
       }
     }),
     vscode.commands.registerCommand('chronos.redoFunction', async () => {
@@ -412,10 +497,14 @@ export async function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      const success = await redoFunctionAtCursor(editor, workerManager);
-      if (success) {
+      const result = await redoFunctionAtCursor(editor, workerManager);
+      if (result.success) {
         treeProvider?.refresh();
         statusBarController?.updateContext(editor);
+        if (result.filePath && result.functionName) {
+          scheduleBlastRadiusNotification(result.filePath, result.functionName, result.parentId);
+          scheduleMissingDepsNotification(result.filePath, result.functionName, editor);
+        }
       }
     }),
     vscode.commands.registerCommand('chronos.revertToSnapshot', async (arg?: string | any) => {
@@ -464,10 +553,14 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       try {
-        const success = await revertFunctionToSnapshot(editor, workerManager, snapshotId);
-        if (success) {
+        const result = await revertFunctionToSnapshot(editor, workerManager, snapshotId);
+        if (result.success) {
           treeProvider?.refresh();
           statusBarController?.updateContext(editor);
+          if (result.filePath && result.functionName) {
+            scheduleBlastRadiusNotification(result.filePath, result.functionName, result.parentId);
+            scheduleMissingDepsNotification(result.filePath, result.functionName, editor);
+          }
         }
       } catch (err: any) {
         const errMsg = err instanceof Error ? err.message : String(err);

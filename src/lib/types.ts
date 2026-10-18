@@ -51,20 +51,55 @@ export const EXCLUDED_NODE_TYPES = new Set<string>(['comment', ';', 'ERROR']);
  * 5 !== 10
  */
 export const VALUE_SENSITIVE_TYPES = new Set<string>([
-  // literals
+  // literals & values
   'number',
   'string',
   'boolean',
+  'null',
+  'regex',
+  'template_string',
 
-  // arithmetic
+  // identifiers & properties
+  'identifier',
+  'property_identifier',
+  'shorthand_property_identifier',
+
+  // arithmetic & increment
   '+',
   '-',
   '*',
   '/',
   '%',
+  '**',
+  '++',
+  '--',
 
-  // assignment / comparison
+  // logical & nullish
+  '&&',
+  '||',
+  '??',
+  '!',
+
+  // bitwise
+  '&',
+  '|',
+  '^',
+  '~',
+  '<<',
+  '>>',
+  '>>>',
+
+  // assignment & comparison
   '=',
+  '+=',
+  '-=',
+  '*=',
+  '/=',
+  '%=',
+  '**=',
+  '&&=',
+  '||=',
+  '??=',
   '==',
   '===',
   '!=',
@@ -123,6 +158,7 @@ export interface ParsedFunction {
   range: CodeRange;
   rawText: string;
   calls: string[];
+  rawCalls?: string[];
   // --- NEW: DOMAIN 4 GATEWAY METADATA ---
   isExported: boolean;
   exportedAs: string | null;

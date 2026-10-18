@@ -218,6 +218,7 @@ export function extractFunctions(
       const funcName = extractFunctionName(node);
       if (funcName) {
         const { parentName, parentId } = extractParentInfo(node);
+        const internalCalls = extractInternalCalls(node);
 
         const parsedFunc: ParsedFunction = {
           name: funcName,
@@ -229,7 +230,8 @@ export function extractFunctions(
             end: { row: node.endPosition.row, column: node.endPosition.column },
           },
           rawText: node.text,
-          calls: extractInternalCalls(node),
+          calls: internalCalls,
+          rawCalls: internalCalls,
           isExported: false, // default, may be updated later by exportResolver
           exportedAs: null, // default, may be updated later by exportResolver
         };
