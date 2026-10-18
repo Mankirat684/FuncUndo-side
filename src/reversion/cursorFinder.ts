@@ -50,3 +50,43 @@ export function findFunctionAtCursor(
 
   return matchingFunctions[0];
 }
+
+export interface FunctionTargetIdentity {
+  functionName: string;
+  parentName?: string | null;
+  parentId?: string | null;
+}
+
+/**
+ * Resolves a function strictly by identity (name, parentName, parentId).
+ * Completely decoupled from editor cursor position and independent of VS Code runtime.
+ */
+export function findFunctionByIdentity(
+  functions: ParsedFunction[],
+  identity: FunctionTargetIdentity,
+): ParsedFunction | null {
+  const normParentName = identity.parentName || 'GLOBAL';
+  const normParentId = identity.parentId || 'GLOBAL';
+
+  // 1. Strict match on name + parentId
+  let match = functions.find(
+    (f) => f.name === identity.functionName && (f.parentId || 'GLOBAL') === normParentId,
+  );
+  if (match) return match;
+
+  // 2. Fallback match on name + parentName
+  match = functions.find(
+    (f) => f.name === identity.functionName && (f.parentName || 'GLOBAL') === normParentName,
+  );
+  if (match) return match;
+
+  // 3. Fallback match on name only if parentName is GLOBAL or unspecified
+  if (normParentName === 'GLOBAL') {
+    match = functions.find(
+      (f) => f.name === identity.functionName && (!f.parentName || f.parentName === 'GLOBAL'),
+    );
+    if (match) return match;
+  }
+
+  return null;
+}

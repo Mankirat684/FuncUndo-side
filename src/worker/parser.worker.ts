@@ -13,6 +13,9 @@ if (!parentPort) {
 }
 
 let parser: Parser | null = null;
+let jsLanguage: Parser.Language | null = null;
+let tsLanguage: Parser.Language | null = null;
+let tsxLanguage: Parser.Language | null = null;
 
 async function bootParser() {
   try {
@@ -25,14 +28,28 @@ async function bootParser() {
     });
     parser = new Parser();
 
-    // Calculate the path to the dist/wasm folder based on the worker's compiled location
-    // The worker will live in dist/worker/, so we go up one level to dist, then into wasm
-    const wasmPath = path.join(__dirname, '..', 'wasm', 'tree-sitter-javascript.wasm');
+    const wasmDir = path.join(__dirname, '..', 'wasm');
+    const wasmPath = path.join(wasmDir, 'tree-sitter-javascript.wasm');
+    jsLanguage = await Parser.Language.load(wasmPath);
 
-    const JavaScript = await Parser.Language.load(wasmPath);
-    parser.setLanguage(JavaScript);
+    try {
+      tsLanguage = await Parser.Language.load(path.join(wasmDir, 'tree-sitter-typescript.wasm'));
+    } catch (e) {
+      console.warn('[Worker] Could not load TypeScript grammar, falling back to JavaScript:', e);
+    }
 
-    console.log('[Worker] WASM Engine booted and JavaScript grammar loaded.');
+    try {
+      tsxLanguage = await Parser.Language.load(path.join(wasmDir, 'tree-sitter-tsx.wasm'));
+    } catch (e) {
+      console.warn(
+        '[Worker] Could not load TSX grammar, falling back to TypeScript/JavaScript:',
+        e,
+      );
+    }
+
+    parser.setLanguage(jsLanguage);
+
+    console.log('[Worker] WASM Engine booted and JavaScript/TypeScript/TSX grammars loaded.');
 
     // tell main thread worker is ready
     parentPort?.postMessage({
@@ -61,6 +78,15 @@ parentPort.on('message', async (message: WorkerMessage) => {
     }
 
     try {
+      const ext = path.extname(message.filePath).toLowerCase();
+      if (ext === '.tsx') {
+        parser.setLanguage(tsxLanguage || tsLanguage || jsLanguage!);
+      } else if (ext === '.ts') {
+        parser.setLanguage(tsLanguage || jsLanguage!);
+      } else {
+        parser.setLanguage(jsLanguage!);
+      }
+
       const tree = parser.parse(message.fileContent);
       const rootNode = tree.rootNode;
 

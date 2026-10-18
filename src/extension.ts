@@ -379,7 +379,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       if (!workerManager || !isDBReady) {
-        vscode.window.showInformationMessage('FuncUndo: Initializing services, please wait a moment...');
+        vscode.window.showInformationMessage(
+          'FuncUndo: Initializing services, please wait a moment...',
+        );
         return;
       }
       const success = await undoFunctionAtCursor(editor, workerManager);
@@ -392,7 +394,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       if (!workerManager || !isDBReady) {
-        vscode.window.showInformationMessage('FuncUndo: Initializing services, please wait a moment...');
+        vscode.window.showInformationMessage(
+          'FuncUndo: Initializing services, please wait a moment...',
+        );
         return;
       }
       const success = await redoFunctionAtCursor(editor, workerManager);
@@ -403,15 +407,23 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('chronos.revertToSnapshot', async (arg?: string | any) => {
       const snapshotId = typeof arg === 'string' ? arg : arg?.snapshotData?.snapshot?.id;
-      if (!snapshotId) return;
+      if (!snapshotId) {
+        vscode.window.showErrorMessage('Chronos: No snapshot specified for reversion.');
+        return;
+      }
 
       if (!workerManager || !isDBReady) {
-        vscode.window.showInformationMessage('FuncUndo: Initializing services, please wait a moment...');
+        vscode.window.showInformationMessage(
+          'FuncUndo: Initializing services, please wait a moment...',
+        );
         return;
       }
 
       const snapshotData = getSnapshotById(snapshotId);
-      if (!snapshotData) return;
+      if (!snapshotData) {
+        vscode.window.showErrorMessage('Chronos: Snapshot not found in database.');
+        return;
+      }
 
       let editor = vscode.window.activeTextEditor;
       const funcRecord = getFunctionById(snapshotData.snapshot.functionHistoryId);
@@ -420,17 +432,33 @@ export async function activate(context: vscode.ExtensionContext) {
       if (funcRecord) {
         const cleanTarget = normalizeOSPath(funcRecord.filePath);
         if (!editor || normalizeOSPath(editor.document.uri.fsPath) !== cleanTarget) {
-          const doc = await vscode.workspace.openTextDocument(funcRecord.filePath);
-          editor = await vscode.window.showTextDocument(doc);
+          try {
+            const doc = await vscode.workspace.openTextDocument(funcRecord.filePath);
+            editor = await vscode.window.showTextDocument(doc);
+          } catch (err: any) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(
+              `Chronos: Failed to open file '${funcRecord.filePath}': ${errMsg}`,
+            );
+            return;
+          }
         }
       }
 
-      if (!editor) return;
+      if (!editor) {
+        vscode.window.showErrorMessage('Chronos: No active editor available for reversion.');
+        return;
+      }
 
-      const success = await revertFunctionToSnapshot(editor, workerManager, snapshotId);
-      if (success) {
-        treeProvider?.refresh();
-        statusBarController?.updateContext(editor);
+      try {
+        const success = await revertFunctionToSnapshot(editor, workerManager, snapshotId);
+        if (success) {
+          treeProvider?.refresh();
+          statusBarController?.updateContext(editor);
+        }
+      } catch (err: any) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Chronos: Reversion failed: ${errMsg}`);
       }
     }),
     vscode.commands.registerCommand('chronos.openFunctionExplorer', async () => {
@@ -492,18 +520,16 @@ export async function activate(context: vscode.ExtensionContext) {
 
       // Gate: only process if changes were made in RAM since last save!
       if (!modifiedFilesInRAM.has(cleanPath)) {
-        console.log(`[Save] Skipping ${cleanPath} — no RAM modifications recorded since last save.`);
+        console.log(
+          `[Save] Skipping ${cleanPath} — no RAM modifications recorded since last save.`,
+        );
         return;
       }
 
       // Consume the dirty flag for this save
       modifiedFilesInRAM.delete(cleanPath);
 
-      debouncePerFile(
-        cleanPath,
-        () => enqueueFile(cleanPath, document.getText()),
-        200,
-      );
+      debouncePerFile(cleanPath, () => enqueueFile(cleanPath, document.getText()), 200);
     }),
   );
 

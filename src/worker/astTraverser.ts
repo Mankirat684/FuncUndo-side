@@ -52,8 +52,7 @@ export function extractFunctionName(node: SyntaxNode): string | null {
     effectiveParent.type === 'property_definition'
   ) {
     const propNode =
-      effectiveParent.childForFieldName('property') ||
-      effectiveParent.childForFieldName('name');
+      effectiveParent.childForFieldName('property') || effectiveParent.childForFieldName('name');
     if (propNode) return propNode.text;
   }
 
@@ -216,13 +215,6 @@ export function extractFunctions(
 
   function walk(node: SyntaxNode) {
     if (node.isNamed && FUNCTION_TYPES.has(node.type)) {
-      if (node.hasError) {
-        console.log(
-          `[Worker] Skipping broken syntax state for function at row ${node.startPosition.row}`,
-        );
-        return; // Stop processing this specific node
-      }
-
       const funcName = extractFunctionName(node);
       if (funcName) {
         const { parentName, parentId } = extractParentInfo(node);
