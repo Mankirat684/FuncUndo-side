@@ -1,0 +1,188 @@
+{
+  "name": "FuncUndo-chronos",
+  "displayName": "FuncUndo",
+  "description": "Semantic version tracking for granular code history.",
+  "version": "0.1.3",
+  "publisher": "chronos",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChronosTeamx/FuncUndo"
+  },
+  "keywords": [
+    "undo",
+    "redo",
+    "history",
+    "ast",
+    "timeline",
+    "functions",
+    "refactoring",
+    "tree-sitter"
+  ],
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "funcundo",
+          "title": "FuncUndo",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "funcundo": [
+        {
+          "id": "chronos.functionExplorer",
+          "name": "Tracked Functions",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "chronos.undoFunction",
+        "title": "FuncUndo: Undo Function at Cursor",
+        "category": "FuncUndo"
+      },
+      {
+        "command": "chronos.redoFunction",
+        "title": "FuncUndo: Redo Function at Cursor",
+        "category": "FuncUndo"
+      },
+      {
+        "command": "chronos.openFunctionExplorer",
+        "title": "Open Function History Explorer",
+        "category": "FuncUndo"
+      },
+      {
+        "command": "chronos.mergeFunctions",
+        "title": "Merge Function Histories...",
+        "category": "FuncUndo",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "chronos.refreshExplorer",
+        "title": "Refresh Explorer",
+        "category": "FuncUndo",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "chronos.revertToSnapshot",
+        "title": "Revert to this Snapshot",
+        "category": "FuncUndo",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "chronos.indexWorkspace",
+        "title": "Re-index Workspace",
+        "category": "FuncUndo",
+        "icon": "$(sync)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "chronos.refreshExplorer",
+          "when": "view == chronos.functionExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chronos.mergeFunctions",
+          "when": "view == chronos.functionExplorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "chronos.indexWorkspace",
+          "when": "view == chronos.functionExplorer",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "chronos.mergeFunctions",
+          "when": "view == chronos.functionExplorer && viewItem == functionItem",
+          "group": "inline"
+        },
+        {
+          "command": "chronos.revertToSnapshot",
+          "when": "view == chronos.functionExplorer && viewItem == snapshotItem",
+          "group": "inline"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "chronos.undoFunction",
+        "key": "ctrl+alt+z",
+        "mac": "cmd+alt+z",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "chronos.redoFunction",
+        "key": "ctrl+alt+y",
+        "mac": "cmd+alt+y",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js && node copy-assets.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production && node copy-assets.js",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src ",
+    "test": "node ./out/test/runTest.js",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.19.17",
+    "@types/sql.js": "^1.4.11",
+    "@types/vscode": "^1.116.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.3",
+    "eslint": "^9.39.3",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "husky": "^9.1.7",
+    "jest": "^30.4.2",
+    "lint-staged": "^16.4.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.8.3",
+    "tree-sitter-cli": "^0.26.8",
+    "ts-jest": "^29.4.9",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,mjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "sql.js": "^1.14.1",
+    "web-tree-sitter": "^0.22.5"
+  }
+}
