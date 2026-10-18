@@ -216,6 +216,7 @@ export async function revertFunctionToSnapshot(
     persistDB();
     vscode.window.showInformationMessage(`Chronos: Reverted '${targetFunc.name}' successfully.`);
     return true;
+    console.log("yay");
   }
 
   vscode.window.showErrorMessage(`Chronos: Failed to apply edit to revert '${targetFunc.name}'.`);
