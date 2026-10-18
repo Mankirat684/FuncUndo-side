@@ -35,9 +35,16 @@ parentPort.on('message', (message: GraphMasterIncoming) => {
         level: risk.level,
       });
     }
+
+    if (message.type === 'GET_FULL_GRAPH') {
+      const data = globalRegistry.exportGraph();
+      parentPort?.postMessage({
+        type: 'GET_FULL_GRAPH_RESPONSE',
+        queryId: message.queryId,
+        data,
+      });
+    }
   } catch (error) {
     console.error('[Graph Master Internal Error]', error);
   }
-
-}
-);
+});

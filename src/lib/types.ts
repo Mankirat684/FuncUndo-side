@@ -218,7 +218,43 @@ export interface GraphMasterUpdateFirewallMessage {
   aliases: Record<string, string>;
 }
 
+export interface DependencyGraphNode {
+  id: string;
+  name: string;
+  parentId: string;
+  parentName: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  riskLevel?: RiskLevel;
+  blastRadiusCount?: number;
+  impactedFunctions?: string[];
+}
+
+export interface DependencyGraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface DependencyGraphData {
+  nodes: DependencyGraphNode[];
+  edges: DependencyGraphEdge[];
+}
+
+export interface GraphMasterGetGraphMessage {
+  type: 'GET_FULL_GRAPH';
+  queryId: string;
+}
+
+export interface GraphMasterGetGraphResponse {
+  type: 'GET_FULL_GRAPH_RESPONSE';
+  queryId: string;
+  data: DependencyGraphData;
+}
+
 export type GraphMasterIncoming =
   | GraphMasterIngestMessage
   | GraphMasterQueryMessage
-  | GraphMasterUpdateFirewallMessage;
+  | GraphMasterUpdateFirewallMessage
+  | GraphMasterGetGraphMessage;
+

@@ -25,6 +25,8 @@ import { FunctionTreeProvider } from './ui/FunctionTreeProvider';
 import { SnapshotContentProvider } from './ui/snapshotContentProvider';
 import { StatusBarController } from './ui/statusBar';
 import { registerMergeCommands } from './commands/mergeCommands';
+import { DependencyGraphPanel } from './ui/DependencyGraphPanel';
+import { FunctionHoverProvider } from './ui/FunctionHoverProvider';
 
 let graphMasterManager: GraphMasterManager | null = null;
 let workerManager: ParserWorkerManager | null = null;
@@ -198,6 +200,7 @@ async function indexWorkspace(): Promise<void> {
     statusBarMsg.dispose();
     treeProvider?.refresh();
     statusBarController?.updateContext();
+    DependencyGraphPanel.currentPanel?.refresh();
 
     vscode.window.setStatusBarMessage(
       `$(check) FuncUndo: Workspace indexed (${validFilePaths.length} files scanned, ${totalFunctionsTracked} functions tracked)`,
@@ -325,6 +328,7 @@ async function orchestrate(filePath: string, fileText: string): Promise<void> {
       console.log(`[Orchestrator] Saved ${functionsToSave.length} functions to SQLite`);
       treeProvider?.refresh();
       statusBarController?.updateContext();
+      DependencyGraphPanel.currentPanel?.refresh();
       vscode.window.setStatusBarMessage(
         `$(history) FuncUndo: Saved snapshot for ${functionsToSave.map((f) => f.functionName).join(', ')}`,
         3000,
@@ -371,6 +375,15 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeTextEditorSelection((event) => {
       statusBarController?.updateContext(event.textEditor);
     }),
+  );
+
+  // 3.5 Register function blast radius hover provider
+  const supportedLanguages = ['javascript', 'typescript', 'javascriptreact', 'typescriptreact'];
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      supportedLanguages.map((lang) => ({ language: lang, scheme: 'file' })),
+      new FunctionHoverProvider(() => graphMasterManager),
+    ),
   );
 
   // 4. Register commands immediately (so commands like chronos.refreshExplorer are never 'not found')
@@ -466,6 +479,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('chronos.indexWorkspace', async () => {
       await indexWorkspace();
+    }),
+    vscode.commands.registerCommand('chronos.showDependencyGraph', async () => {
+      await DependencyGraphPanel.createOrShow(context.extensionUri, graphMasterManager);
     }),
   );
 

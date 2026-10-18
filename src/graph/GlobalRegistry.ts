@@ -1,4 +1,7 @@
 import {
+  DependencyGraphData,
+  DependencyGraphEdge,
+  DependencyGraphNode,
   GraphNode,
   ImportedSymbol,
   ParsedFunction,
@@ -316,4 +319,74 @@ export class GlobalSymbolRegistry {
       dependents: Array.from(impacted),
     };
   }
+
+  /**
+   * Serializes the full directed function dependency graph for the UI.
+   */
+  public exportGraph(): DependencyGraphData {
+    const nodeMap = new Map<string, DependencyGraphNode>();
+
+    for (const [fileURI, fileRecord] of this.fileRegistry.entries()) {
+      for (const func of fileRecord.functions) {
+        const id = GlobalSymbolRegistry.generateUUID(fileURI, func.name, func.parentId);
+        const risk = this.computeRiskAnalysis(fileURI, func.name, func.parentId);
+        nodeMap.set(id, {
+          id,
+          name: func.name,
+          parentId: func.parentId || 'GLOBAL',
+          parentName: func.parentName || 'GLOBAL',
+          filePath: fileURI,
+          startLine: func.range.start.row,
+          endLine: func.range.end.row,
+          riskLevel: risk.level,
+          blastRadiusCount: risk.dependentCount,
+          impactedFunctions: risk.dependents,
+        });
+      }
+    }
+
+    for (const key of this.directedGraph.keys()) {
+      if (!nodeMap.has(key)) {
+        const parts = key.split('::');
+        const filePath = parts[0] || '';
+        const parentId = parts.length > 2 ? parts[1] : 'GLOBAL';
+        const name = parts.length > 2 ? parts[2] : parts[1] || key;
+        const risk = this.computeRiskAnalysis(filePath, name, parentId);
+        nodeMap.set(key, {
+          id: key,
+          name,
+          parentId,
+          parentName: parentId,
+          filePath,
+          startLine: 0,
+          endLine: 0,
+          riskLevel: risk.level,
+          blastRadiusCount: risk.dependentCount,
+          impactedFunctions: risk.dependents,
+        });
+      }
+    }
+
+    const edges: DependencyGraphEdge[] = [];
+    const edgeSet = new Set<string>();
+
+    for (const [sourceId, node] of this.directedGraph.entries()) {
+      for (const targetId of node.outboundEdges) {
+        const edgeKey = `${sourceId}->${targetId}`;
+        if (!edgeSet.has(edgeKey)) {
+          edgeSet.add(edgeKey);
+          edges.push({
+            source: sourceId,
+            target: targetId,
+          });
+        }
+      }
+    }
+
+    return {
+      nodes: Array.from(nodeMap.values()),
+      edges,
+    };
+  }
 }
+

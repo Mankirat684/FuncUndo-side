@@ -3,6 +3,9 @@ import { Worker } from 'worker_threads';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import {
+  DependencyGraphData,
+  GraphMasterGetGraphMessage,
+  //GraphMasterGetGraphResponse,
   GraphMasterQueryMessage,
   GraphMasterQueryResponse,
   WorkerParseSuccess,
@@ -14,6 +17,13 @@ export class GraphMasterManager {
     string,
     {
       resolve: (value: GraphMasterQueryResponse) => void;
+      reject: (reason?: any) => void;
+    }
+  >();
+  private pendingGraphQueries = new Map<
+    string,
+    {
+      resolve: (value: DependencyGraphData) => void;
       reject: (reason?: any) => void;
     }
   >();
@@ -31,6 +41,12 @@ export class GraphMasterManager {
           pending.resolve(message);
           this.pendingQueries.delete(message.queryId);
         }
+      } else if (message.type === 'GET_FULL_GRAPH_RESPONSE') {
+        const pending = this.pendingGraphQueries.get(message.queryId);
+        if (pending) {
+          pending.resolve(message.data);
+          this.pendingGraphQueries.delete(message.queryId);
+        }
       }
     });
 
@@ -40,6 +56,10 @@ export class GraphMasterManager {
         query.reject(err);
       }
       this.pendingQueries.clear();
+      for (const [, query] of this.pendingGraphQueries.entries()) {
+        query.reject(err);
+      }
+      this.pendingGraphQueries.clear();
     });
 
     this.worker.on('exit', (code) => {
@@ -92,6 +112,23 @@ export class GraphMasterManager {
 
     return new Promise((resolve, reject) => {
       this.pendingQueries.set(queryId, { resolve, reject });
+      this.worker!.postMessage(queryMessage);
+    });
+  }
+
+  public async getFullGraph(): Promise<DependencyGraphData> {
+    if (!this.worker) {
+      throw new Error('GraphMasterManager is not initialized');
+    }
+
+    const queryId = crypto.randomUUID();
+    const queryMessage: GraphMasterGetGraphMessage = {
+      type: 'GET_FULL_GRAPH',
+      queryId,
+    };
+
+    return new Promise((resolve, reject) => {
+      this.pendingGraphQueries.set(queryId, { resolve, reject });
       this.worker!.postMessage(queryMessage);
     });
   }
