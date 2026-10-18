@@ -2,7 +2,7 @@
   "name": "FuncUndo-chronos",
   "displayName": "FuncUndo",
   "description": "Semantic version tracking for granular code history.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "chronos",
   "license": "MIT",
   "icon": "media/icon.png",
